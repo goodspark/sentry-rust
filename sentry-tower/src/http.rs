@@ -22,6 +22,7 @@ use tower_service::Service;
 #[derive(Clone, Default)]
 pub struct SentryHttpLayer {
     start_transaction: bool,
+    clear_scope: bool,
 }
 
 impl SentryHttpLayer {
@@ -35,6 +36,15 @@ impl SentryHttpLayer {
     pub fn with_transaction() -> Self {
         Self {
             start_transaction: true,
+            clear_scope: false,
+        }
+    }
+
+    /// Creates a new Layer that clears the scope when it's executed.
+    pub fn clear_scope() -> Self {
+        Self {
+            start_transaction: false,
+            clear_scope: true,
         }
     }
 }
@@ -48,6 +58,7 @@ impl SentryHttpLayer {
 pub struct SentryHttpService<S> {
     service: S,
     start_transaction: bool,
+    clear_scope: bool,
 }
 
 impl<S> Layer<S> for SentryHttpLayer {
@@ -57,6 +68,7 @@ impl<S> Layer<S> for SentryHttpLayer {
         Self::Service {
             service,
             start_transaction: self.start_transaction,
+            clear_scope: self.clear_scope,
         }
     }
 }
@@ -72,6 +84,7 @@ pub struct SentryHttpFuture<F> {
         sentry_core::TransactionOrSpan,
         Option<sentry_core::TransactionOrSpan>,
     )>,
+    clear_scope: bool,
     #[pin]
     future: F,
 }
@@ -86,6 +99,9 @@ where
         let slf = self.project();
         if let Some((sentry_req, trx_ctx)) = slf.on_first_poll.take() {
             sentry_core::configure_scope(|scope| {
+                if self.clear_scope {
+                    scope.clear()
+                }
                 scope.add_event_processor(move |mut event| {
                     if event.request.is_none() {
                         event.request = Some(sentry_req.clone());
@@ -167,6 +183,7 @@ where
         SentryHttpFuture {
             on_first_poll: Some((sentry_req, trx_ctx)),
             transaction: None,
+            clear_scope: self.clear_scope,
             future: self.service.call(request),
         }
     }
